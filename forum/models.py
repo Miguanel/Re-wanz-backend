@@ -7,8 +7,16 @@ class ForumPost(models.Model):
     title = models.CharField(max_length=255)
     content = models.TextField()
 
-    image = models.ImageField(upload_to='forum_images/', null=True, blank=True, verbose_name="Dołączone zdjęcie")
-    images = models.ManyToManyField('users.SharedImage', blank=True, related_name='forum_posts', verbose_name="Dołączone zdjęcia")
+    # USUNIĘTO: image (pole powodowało błąd bazy danych)
+    # ZOSTAWIONO: images (jako relację ManyToMany do Twoich zdjęć)
+    images = models.ManyToManyField(
+        'users.SharedImage',
+        blank=True,
+        related_name='forum_posts',
+        verbose_name="Dołączone zdjęcia"
+    )
+
+    # Pole tags zostawiamy jako JSONField, będzie świetnie współgrać z nowym serializatorem
     tags = models.JSONField(default=list, blank=True, help_text="Lista tagów, np. ['technologia', 'nauka']")
 
     created_at = models.DateTimeField(auto_now_add=True)

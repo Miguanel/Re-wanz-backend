@@ -15,7 +15,6 @@ class AuthorSerializer(serializers.ModelSerializer):
 class ForumPostSerializer(serializers.ModelSerializer):
     author = AuthorSerializer(read_only=True)
     timeAgo = serializers.SerializerMethodField()
-    images = SharedImageSerializer(many=True, read_only=True)
 
     # 1. WŁAŚCIWY ODCZYT (GET) - Metoda gwarantująca brak błędu 500
     tags = serializers.SerializerMethodField()
@@ -31,7 +30,7 @@ class ForumPostSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ForumPost
-        fields = ['id', 'author', 'title', 'content', 'images', 'uploaded_image_ids', 'uploaded_tags', 'tags',
+        fields = ['id', 'author', 'title', 'content', 'post_images', 'uploaded_image_ids', 'uploaded_tags', 'tags',
                   'upvotes', 'views', 'bounty', 'is_resolved', 'timeAgo']
 
     def create(self, validated_data):
