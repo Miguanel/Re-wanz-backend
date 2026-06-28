@@ -19,7 +19,7 @@ urlpatterns = [
     # Endpointy dla Twoich aplikacji w Androidzie
     path('api/forum/', include('forum.urls')),
     path('api/guilds/', include('guilds.urls')),
-    path('api/tasks/', include('tasks.urls')),
+    # path('api/tasks/', include('tasks.urls')),
     path('api/users/', include('users.urls')),
 ]
 

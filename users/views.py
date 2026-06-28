@@ -1,8 +1,11 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from .models import CustomUser
-from .serializers import UserProfileSerializer
+from rest_framework.parsers import MultiPartParser, FormParser
+
+from .models import CustomUser, SharedImage
+from .serializers import UserProfileSerializer, SharedImageSerializer
+
 
 class UserViewSet(viewsets.ReadOnlyModelViewSet):
     """
@@ -26,7 +29,6 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
         serializer = self.get_serializer(request.user)
         return Response(serializer.data)
 
-    # NOWOŚĆ: Endpoint Rejestracji
     @action(detail=False, methods=['post'])
     def register(self, request):
         """ POST /api/users/register/ """
@@ -52,3 +54,19 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
         user.save()
 
         return Response({'message': 'Konto utworzone pomyślnie!'}, status=status.HTTP_201_CREATED)
+
+
+class SharedImageViewSet(viewsets.ModelViewSet):
+    """
+    Endpoint do wgrywania zdjęć z telefonu (np. do Zadań Terenowych lub Postów)
+    """
+    queryset = SharedImage.objects.all()
+    serializer_class = SharedImageSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    # Mówi Django, jak ma odczytać plik ze strumienia danych HTTP (form-data)
+    parser_classes = (MultiPartParser, FormParser)
+
+    def perform_create(self, serializer):
+        # Zabezpieczenie: Zdjęcie zawsze jest przypisywane do użytkownika, który wysłał token JWT
+        serializer.save(uploaded_by=self.request.user)
