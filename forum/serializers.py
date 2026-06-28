@@ -20,30 +20,45 @@ from users.serializers import SharedImageSerializer
 class ForumPostSerializer(serializers.ModelSerializer):
     author = AuthorSerializer(read_only=True)
     timeAgo = serializers.SerializerMethodField()
-
-    # Zwraca gotowe obiekty obrazków (z linkiem URL) przy pobieraniu postów
     images = SharedImageSerializer(many=True, read_only=True)
 
-    # Służy do odbierania listy ID obrazków (np. [1, 2]) podczas tworzenia posta przez Androida
     uploaded_image_ids = serializers.ListField(
         child=serializers.IntegerField(), write_only=True, required=False
     )
 
+    # NOWOŚĆ: Mówimy Django, żeby spodziewało się listy stringów z Androida
+    tags = serializers.ListField(
+        child=serializers.CharField(), required=False
+    )
+
     class Meta:
         model = ForumPost
-        # AKTUALIZACJA: Dodajemy 'images' oraz 'uploaded_image_ids'
         fields = ['id', 'author', 'title', 'content', 'images', 'uploaded_image_ids', 'tags', 'upvotes', 'views',
                   'bounty', 'is_resolved', 'timeAgo']
 
-    # Nadpisujemy logikę tworzenia posta, aby połączyć przesłane ID zdjęć z nowym postem
     def create(self, validated_data):
+        # 1. WYCIĄGAMY ID zdjęć oraz Tagi ZANIM stworzymy posta!
         image_ids = validated_data.pop('uploaded_image_ids', [])
+        tags_data = validated_data.pop('tags', [])
+
+        # 2. Tworzymy "czystego" posta (z samym tytułem i treścią)
         post = ForumPost.objects.create(**validated_data)
+
+        # 3. Dodajemy zdjęcia (jeśli są)
         if image_ids:
-            post.images.set(image_ids)  # Przypina wybrane zdjęcia do posta
+            post.images.set(image_ids)
+
+        # 4. Dodajemy tagi (jeśli są) - TERAZ post ma już swoje ID w bazie, więc to zadziała
+        if tags_data:
+            # Jeśli używasz biblioteki django-taggit, to poniższa linijka wystarczy:
+            post.tags.add(*tags_data)
+
+            # (Uwaga: Jeśli masz własny model Tag, odkomentuj to i zakomentuj linijkę wyżej)
+            # for tag_name in tags_data:
+            #     tag_obj, _ = Tag.objects.get_or_create(name=tag_name)
+            #     post.tags.add(tag_obj)
+
         return post
 
     def get_timeAgo(self, obj):
-        # W przyszłości tu napiszemy logikę obliczającą czas od publikacji,
-        # teraz na potrzeby testów zwracamy prostą datę z bazy.
         return obj.created_at.strftime("%d/%m/%Y, %H:%M")
