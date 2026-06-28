@@ -26,37 +26,35 @@ class ForumPostSerializer(serializers.ModelSerializer):
         child=serializers.IntegerField(), write_only=True, required=False
     )
 
-    # NOWOŚĆ: Mówimy Django, żeby spodziewało się listy stringów z Androida
-    tags = serializers.ListField(
-        child=serializers.CharField(), required=False
+    # 1. POLE DO ODCZYTU: Gdy Android robi GET, wysyłamy ładną listę stringów
+    tags = serializers.SlugRelatedField(
+        many=True, read_only=True, slug_field='name'
+    )
+
+    # 2. POLE DO ZAPISU: Zmieniamy nazwę na 'uploaded_tags', żeby nie gryzło się z oryginałem
+    uploaded_tags = serializers.ListField(
+        child=serializers.CharField(), write_only=True, required=False
     )
 
     class Meta:
         model = ForumPost
-        fields = ['id', 'author', 'title', 'content', 'images', 'uploaded_image_ids', 'tags', 'upvotes', 'views',
-                  'bounty', 'is_resolved', 'timeAgo']
+        # Zamieniamy miejscami pola wejściowe
+        fields = ['id', 'author', 'title', 'content', 'images', 'uploaded_image_ids', 'uploaded_tags', 'tags',
+                  'upvotes', 'views', 'bounty', 'is_resolved', 'timeAgo']
 
     def create(self, validated_data):
-        # 1. WYCIĄGAMY ID zdjęć oraz Tagi ZANIM stworzymy posta!
+        # 3. Wyciągamy dane z odpowiednich pół "write_only"
         image_ids = validated_data.pop('uploaded_image_ids', [])
-        tags_data = validated_data.pop('tags', [])
+        tags_data = validated_data.pop('uploaded_tags', [])
 
-        # 2. Tworzymy "czystego" posta (z samym tytułem i treścią)
         post = ForumPost.objects.create(**validated_data)
 
-        # 3. Dodajemy zdjęcia (jeśli są)
         if image_ids:
             post.images.set(image_ids)
 
-        # 4. Dodajemy tagi (jeśli są) - TERAZ post ma już swoje ID w bazie, więc to zadziała
         if tags_data:
-            # Jeśli używasz biblioteki django-taggit, to poniższa linijka wystarczy:
+            # Jeśli używasz django-taggit:
             post.tags.add(*tags_data)
-
-            # (Uwaga: Jeśli masz własny model Tag, odkomentuj to i zakomentuj linijkę wyżej)
-            # for tag_name in tags_data:
-            #     tag_obj, _ = Tag.objects.get_or_create(name=tag_name)
-            #     post.tags.add(tag_obj)
 
         return post
 
