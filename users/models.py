@@ -1,6 +1,8 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 
+from core import settings
+
 
 class CustomUser(AbstractUser):
     dobroty = models.IntegerField(default=0)
@@ -15,3 +17,11 @@ class CustomUser(AbstractUser):
 
     def __str__(self):
         return self.username
+
+class SharedImage(models.Model):
+    image = models.ImageField(upload_to='shared_images/')
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='uploaded_images')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Zdjęcie {self.id} (Wgrał: {self.uploaded_by.username})"

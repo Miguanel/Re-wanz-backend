@@ -6,6 +6,11 @@ class ForumPost(models.Model):
     author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='forum_posts')
     title = models.CharField(max_length=255)
     content = models.TextField()
+
+    image = models.ImageField(upload_to='forum_images/', null=True, blank=True, verbose_name="Dołączone zdjęcie")
+    images = models.ManyToManyField('users.SharedImage', blank=True, related_name='forum_posts', verbose_name="Dołączone zdjęcia")
+    tags = models.JSONField(default=list, blank=True, help_text="Lista tagów, np. ['technologia', 'nauka']")
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     # System Stack Overflow
