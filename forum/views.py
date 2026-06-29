@@ -1,8 +1,9 @@
-from rest_framework import viewsets, permissions
+from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+
 from .models import ForumPost
-from .serializers import ForumPostSerializer
+from .serializers import CommentSerializer, ForumPostSerializer
 
 class ForumPostViewSet(viewsets.ModelViewSet):
     """
@@ -21,6 +22,21 @@ class ForumPostViewSet(viewsets.ModelViewSet):
         # Kiedy Android przysyła POST z nowym zadaniem,
         # automatycznie przypisz zalogowanego użytkownika (z tokena) jako autora.
         serializer.save(author=self.request.user)
+
+    @action(detail=True, methods=['get', 'post'])
+    def comments(self, request, pk=None):
+        """GET/POST /api/forum/posts/{id}/comments/"""
+        post = self.get_object()
+
+        if request.method == 'GET':
+            comments = post.comments.all().order_by('created_at')
+            serializer = CommentSerializer(comments, many=True)
+            return Response(serializer.data)
+
+        serializer = CommentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(author=request.user, post=post)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     # Niestandardowy Endpoint dla mechaniki z Twojego Androida
     @action(detail=True, methods=['post'])
