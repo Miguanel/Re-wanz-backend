@@ -27,6 +27,7 @@ class ForumPostSerializer(serializers.ModelSerializer):
     author = AuthorSerializer(read_only=True)
     comments = CommentSerializer(many=True, read_only=True)
     vote_count = serializers.SerializerMethodField()
+    user_vote = serializers.SerializerMethodField()
     timeAgo = serializers.SerializerMethodField()
     tags = serializers.SerializerMethodField()
 
@@ -50,7 +51,7 @@ class ForumPostSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'author', 'title', 'content', 'post_images',
             'uploaded_image_ids', 'uploaded_tags', 'tags',
-            'comments', 'vote_count',
+            'comments', 'vote_count', 'user_vote',
             'upvotes', 'views', 'bounty', 'is_resolved', 'timeAgo'
         ]
 
@@ -81,6 +82,13 @@ class ForumPostSerializer(serializers.ModelSerializer):
     def get_vote_count(self, obj):
         total = obj.votes.aggregate(total=Sum('value'))['total']
         return total or 0
+
+    def get_user_vote(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            vote = obj.votes.filter(user=request.user).first()
+            return vote.value if vote else 0
+        return 0
 
     def get_timeAgo(self, obj):
         return obj.created_at.strftime("%d/%m/%Y, %H:%M")

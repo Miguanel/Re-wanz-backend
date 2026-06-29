@@ -42,9 +42,14 @@ class Comment(models.Model):
 
 
 class Vote(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='forum_votes')
     post = models.ForeignKey(ForumPost, on_delete=models.CASCADE, related_name='votes')
     value = models.IntegerField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'post'], name='unique_user_post_vote'),
+        ]
 
     def __str__(self):
         return f"Vote ({self.value}) on: {self.post.title}"
