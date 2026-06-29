@@ -1,28 +1,60 @@
-from django.db.models import Sum
+from django.db.models import Count, OuterRef, Subquery, Sum, Value
+from django.db.models.functions import Coalesce
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from .models import ForumPost, Vote
-from .serializers import CommentSerializer, ForumPostSerializer
+from .serializers import (
+    CommentSerializer,
+    ForumPostListSerializer,
+    ForumPostSerializer,
+)
+
 
 class ForumPostViewSet(viewsets.ModelViewSet):
     """
     Automatycznie generuje pełne API dla Forum:
-    - GET /api/forum/posts/ -> Lista wszystkich postów
+    - GET /api/forum/posts/ -> Lista wszystkich postów (comment_count, bez tablicy comments)
     - POST /api/forum/posts/ -> Dodaj nowy post
-    - GET /api/forum/posts/{id}/ -> Pobierz konkretny post
+    - GET /api/forum/posts/{id}/ -> Pobierz konkretny post (z pełną listą comments)
     """
-    queryset = ForumPost.objects.all().order_by('-created_at') # Domyślnie sortuje od najnowszych
     serializer_class = ForumPostSerializer
-    # Na ten moment pozwalamy każdemu (nawet niezalogowanym z Androida) czytać posty,
-    # ale do dodawania wymagamy logowania.
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
+    def get_queryset(self):
+        queryset = ForumPost.objects.annotate(
+            comment_count=Count('comments', distinct=True),
+            vote_count=Coalesce(Sum('votes__value'), Value(0)),
+        ).order_by('-created_at')
+
+        user = self.request.user
+        if user.is_authenticated:
+            user_vote_subquery = Vote.objects.filter(
+                post=OuterRef('pk'),
+                user=user,
+            ).values('value')[:1]
+            queryset = queryset.annotate(
+                user_vote=Coalesce(Subquery(user_vote_subquery), Value(0)),
+            )
+        else:
+            queryset = queryset.annotate(user_vote=Value(0))
+
+        if self.action == 'retrieve':
+            queryset = queryset.prefetch_related('comments__author', 'images')
+        elif self.action == 'list':
+            queryset = queryset.prefetch_related('images')
+
+        return queryset
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return ForumPostListSerializer
+        return ForumPostSerializer
+
     def perform_create(self, serializer):
-        # Kiedy Android przysyła POST z nowym zadaniem,
-        # automatycznie przypisz zalogowanego użytkownika (z tokena) jako autora.
-        serializer.save(author=self.request.user)
+        post = serializer.save(author=self.request.user)
+        serializer.instance = self.get_queryset().get(pk=post.pk)
 
     @action(detail=True, methods=['get', 'post'])
     def comments(self, request, pk=None):
@@ -30,7 +62,7 @@ class ForumPostViewSet(viewsets.ModelViewSet):
         post = self.get_object()
 
         if request.method == 'GET':
-            comments = post.comments.all().order_by('created_at')
+            comments = post.comments.select_related('author').order_by('created_at')
             serializer = CommentSerializer(comments, many=True)
             return Response(serializer.data)
 
@@ -79,7 +111,6 @@ class ForumPostViewSet(viewsets.ModelViewSet):
             'is_post': True,
         })
 
-    # Niestandardowy Endpoint dla mechaniki z Twojego Androida
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def upvote(self, request, pk=None):
         """ POST /api/forum/posts/{id}/upvote/ """
