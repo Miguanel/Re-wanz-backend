@@ -1,6 +1,8 @@
-from rest_framework import serializers
-from .models import ForumPost
 from django.contrib.auth import get_user_model
+from django.db.models import Sum
+from rest_framework import serializers
+
+from .models import Comment, ForumPost
 # Import niepotrzebny, jeśli go nie używasz wewnątrz klasy
 # from users.serializers import SharedImageSerializer
 
@@ -11,8 +13,20 @@ class AuthorSerializer(serializers.ModelSerializer):
         model = User
         fields = ['username', 'level']
 
+
+class CommentSerializer(serializers.ModelSerializer):
+    author = AuthorSerializer(read_only=True)
+
+    class Meta:
+        model = Comment
+        fields = ['id', 'author', 'content', 'created_at']
+        read_only_fields = ['created_at']
+
+
 class ForumPostSerializer(serializers.ModelSerializer):
     author = AuthorSerializer(read_only=True)
+    comments = CommentSerializer(many=True, read_only=True)
+    vote_count = serializers.SerializerMethodField()
     timeAgo = serializers.SerializerMethodField()
     tags = serializers.SerializerMethodField()
 
@@ -36,6 +50,7 @@ class ForumPostSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'author', 'title', 'content', 'post_images',
             'uploaded_image_ids', 'uploaded_tags', 'tags',
+            'comments', 'vote_count',
             'upvotes', 'views', 'bounty', 'is_resolved', 'timeAgo'
         ]
 
@@ -62,6 +77,10 @@ class ForumPostSerializer(serializers.ModelSerializer):
                 post.save()
 
         return post
+
+    def get_vote_count(self, obj):
+        total = obj.votes.aggregate(total=Sum('value'))['total']
+        return total or 0
 
     def get_timeAgo(self, obj):
         return obj.created_at.strftime("%d/%m/%Y, %H:%M")

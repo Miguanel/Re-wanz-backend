@@ -31,14 +31,20 @@ class ForumPost(models.Model):
         return self.title
 
 
-class ForumComment(models.Model):
+class Comment(models.Model):
     post = models.ForeignKey(ForumPost, on_delete=models.CASCADE, related_name='comments')
     author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     content = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
 
-    upvotes = models.IntegerField(default=0)
-    is_accepted_answer = models.BooleanField(default=False)
+    def __str__(self):
+        return f"Comment on: {self.post.title}"
+
+
+class Vote(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    post = models.ForeignKey(ForumPost, on_delete=models.CASCADE, related_name='votes')
+    value = models.IntegerField()
 
     def __str__(self):
-        return f"Odpowiedź do: {self.post.title}"
+        return f"Vote ({self.value}) on: {self.post.title}"
