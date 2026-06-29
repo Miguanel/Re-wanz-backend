@@ -45,13 +45,21 @@ class ForumPostSerializer(serializers.ModelSerializer):
 
         post = ForumPost.objects.create(**validated_data)
 
+        # Obsługa zdjęć (Many-to-Many)
         if image_ids:
-            # Upewnij się, że .images to ManyToManyField w modelu ForumPost
             post.images.set(image_ids)
 
+        # Obsługa tagów
         if tags_data:
-            # Upewnij się, że .tags to TaggableManager (django-taggit)
-            post.tags.add(*tags_data)
+            # SPRAWDZAMY TYP POLA:
+            # Jeśli tags to TaggableManager (django-taggit), używamy .add()
+            # Jeśli to JSONField (list), musimy przypisać listę bezpośrednio
+            if hasattr(post.tags, 'add'):
+                post.tags.add(*tags_data)
+            else:
+                # Jeśli to zwykłe pole (np. JSONField), przypisujemy listę:
+                post.tags = tags_data
+                post.save()
 
         return post
 
