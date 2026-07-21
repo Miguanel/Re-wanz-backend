@@ -4,23 +4,30 @@ from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from .models import ForumPost, Vote
+# Zaktualizowane importy modeli (dodano Comment i CommentVote)
+from .models import ForumPost, Vote, Comment, CommentVote
 from .serializers import (
     CommentSerializer,
     ForumPostListSerializer,
     ForumPostSerializer,
 )
 
+# Import naszego nowego strażnika uprawnień
+from .permissions import IsAuthorOrAdminOrReadOnly
+
 
 class ForumPostViewSet(viewsets.ModelViewSet):
     """
     Automatycznie generuje pełne API dla Forum:
-    - GET /api/forum/posts/ -> Lista wszystkich postów (comment_count, bez tablicy comments)
+    - GET /api/forum/posts/ -> Lista wszystkich postów
     - POST /api/forum/posts/ -> Dodaj nowy post
-    - GET /api/forum/posts/{id}/ -> Pobierz konkretny post (z pełną listą comments)
+    - GET /api/forum/posts/{id}/ -> Pobierz konkretny post (z listą komentarzy)
+    - DELETE /api/forum/posts/{id}/ -> Usuń post (tylko autor lub admin)
     """
     serializer_class = ForumPostSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+    # DODANO: IsAuthorOrAdminOrReadOnly
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsAuthorOrAdminOrReadOnly]
 
     def get_queryset(self):
         queryset = ForumPost.objects.annotate(
@@ -41,7 +48,8 @@ class ForumPostViewSet(viewsets.ModelViewSet):
             queryset = queryset.annotate(user_vote=Value(0))
 
         if self.action == 'retrieve':
-            queryset = queryset.prefetch_related('comments__author', 'images')
+            # Optymalizacja zapytań dla komentarzy
+            queryset = queryset.prefetch_related('comments__author', 'comments__votes', 'images')
         elif self.action == 'list':
             queryset = queryset.prefetch_related('images')
 
@@ -62,18 +70,20 @@ class ForumPostViewSet(viewsets.ModelViewSet):
         post = self.get_object()
 
         if request.method == 'GET':
-            comments = post.comments.select_related('author').order_by('created_at')
-            serializer = CommentSerializer(comments, many=True)
+            # Optymalizacja N+1 dla głosów przy komentarzach
+            comments = post.comments.select_related('author').prefetch_related('votes').order_by('created_at')
+            serializer = CommentSerializer(comments, many=True, context={'request': request})
             return Response(serializer.data)
 
-        serializer = CommentSerializer(data=request.data)
+        # Context potrzebny aby pobrać user_vote dla nowo utworzonego komentarza
+        serializer = CommentSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         serializer.save(author=request.user, post=post)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def vote(self, request, pk=None):
-        """POST /api/forum/posts/{id}/vote/  body: {"value": 1|-1|0, ...}"""
+        """POST /api/forum/posts/{id}/vote/  body: {"value": 1|-1|0}"""
         post = self.get_object()
 
         try:
@@ -118,3 +128,51 @@ class ForumPostViewSet(viewsets.ModelViewSet):
         post.upvotes += 1
         post.save()
         return Response({'status': 'upvoted', 'total_votes': post.upvotes})
+
+
+# --- NOWY WIDOK: Zarządzanie komentarzami (usuwanie, głosowanie) ---
+class CommentViewSet(viewsets.ModelViewSet):
+    queryset = Comment.objects.all()
+    serializer_class = CommentSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsAuthorOrAdminOrReadOnly]
+
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def vote(self, request, pk=None):
+        """POST /api/forum/comments/{id}/vote/  body: {"value": 1|-1|0}"""
+        comment = self.get_object()
+
+        try:
+            value = int(request.data.get('value'))
+        except (TypeError, ValueError):
+            return Response(
+                {'detail': 'Pole "value" musi być liczbą całkowitą: 1, -1 lub 0.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if value not in (-1, 0, 1):
+            return Response(
+                {'detail': 'Dozwolone wartości "value": 1 (up), -1 (down), 0 (usuń głos).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        vote_obj = CommentVote.objects.filter(user=request.user, comment=comment).first()
+
+        if value == 0:
+            if vote_obj:
+                vote_obj.delete()
+        elif vote_obj:
+            vote_obj.value = value
+            vote_obj.save(update_fields=['value'])
+        else:
+            CommentVote.objects.create(user=request.user, comment=comment, value=value)
+
+        vote_count = comment.votes.aggregate(total=Sum('value'))['total'] or 0
+        user_vote = CommentVote.objects.filter(user=request.user, comment=comment).values_list('value',
+                                                                                               flat=True).first() or 0
+
+        return Response({
+            'vote_count': vote_count,
+            'user_vote': user_vote,
+            'target_id': comment.id,
+            'is_post': False,
+        })
