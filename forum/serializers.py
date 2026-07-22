@@ -1,9 +1,21 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
+from rest_framework.exceptions import ValidationError
 
-from .models import Comment, ForumPost, Task, CommentVote
+from .models import Comment, ForumPost, CommentVote
+from tasks.models import Task
 
 User = get_user_model()
+
+# Przykładowy filtr wulgaryzmów
+PROFANITY_LIST = ['spam', 'obraźliwe_słowo1', 'obraźliwe_słowo2']
+
+
+def filter_profanity(text):
+    for word in PROFANITY_LIST:
+        if word in text.lower():
+            raise ValidationError(f"Treść zawiera niedozwolone słownictwo: {word}")
+    return text
 
 
 class AuthorSerializer(serializers.ModelSerializer):
@@ -13,47 +25,60 @@ class AuthorSerializer(serializers.ModelSerializer):
 
 
 class TaskSerializer(serializers.ModelSerializer):
-    """
-    Tłumacz dla Zadań Terenowych (Field Tasks).
-    Odbiera dane z MapTaskRequest z Androida.
-    """
-    author = AuthorSerializer(read_only=True)
+    creator = AuthorSerializer(read_only=True) # Zmieniono author na creator
+    assignee = AuthorSerializer(read_only=True)
 
     class Meta:
         model = Task
         fields = [
             'id', 'title', 'description', 'latitude', 'longitude',
-            'bounty', 'status', 'author', 'created_at'
+            'bounty', 'status', 'creator', 'assignee' # Usunięto daty, dodano creator
         ]
-        # Zabezpieczenie: Android nie może sam ustawić sobie statusu na "COMPLETED" podczas tworzenia
-        read_only_fields = ['id', 'status', 'author', 'created_at']
+        read_only_fields = ['id', 'status', 'creator', 'assignee']
 
     def create(self, validated_data):
-        # Automatycznie ustawia status początkowy na 'OPEN' (zgodnie z modelem)
         validated_data['status'] = 'OPEN'
         return super().create(validated_data)
 
 
 class CommentSerializer(serializers.ModelSerializer):
     author = AuthorSerializer(read_only=True)
-    # Jawna deklaracja parent_id dla zapytań POST (tworzenie odpowiedzi na komentarz z Androida)
     parent_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
 
-    # Dodane pola dla systemu oceniania komentarzy
     vote_count = serializers.SerializerMethodField()
     user_vote = serializers.SerializerMethodField()
 
     class Meta:
         model = Comment
-        fields = ['id', 'author', 'content', 'created_at', 'parent_id', 'vote_count', 'user_vote']
-        read_only_fields = ['created_at']
+        fields = ['id', 'author', 'content', 'created_at', 'updated_at', 'is_deleted', 'parent_id', 'vote_count',
+                  'user_vote']
+        read_only_fields = ['created_at', 'updated_at', 'is_deleted']
+
+    def validate_content(self, value):
+        return filter_profanity(value)
+
+    def validate_parent_id(self, value):
+        """ Limitowanie głębokości zagnieżdżeń do maksymalnie 2 poziomów """
+        if value:
+            try:
+                parent = Comment.objects.get(id=value)
+                if parent.is_deleted:
+                    raise ValidationError("Nie można odpowiedzieć na usunięty komentarz.")
+                depth = 1
+                current = parent
+                while current.parent_id:
+                    depth += 1
+                    current = current.parent
+                if depth >= 2:
+                    raise ValidationError("Maksymalna głębokość odpowiedzi została osiągnięta.")
+            except Comment.DoesNotExist:
+                raise ValidationError("Wskazany komentarz nadrzędny nie istnieje.")
+        return value
 
     def get_vote_count(self, obj):
-        # Zlicza sumę głosów przypisanych do tego komentarza
         return sum(vote.value for vote in obj.votes.all())
 
     def get_user_vote(self, obj):
-        # Sprawdza, czy zalogowany użytkownik (wysyłający request) zagłosował na ten komentarz
         request = self.context.get('request')
         if request and request.user.is_authenticated:
             vote = obj.votes.filter(user=request.user).first()
@@ -78,7 +103,7 @@ class ForumPostSerializerBase(serializers.ModelSerializer):
         child=serializers.IntegerField(), write_only=True, required=False
     )
     uploaded_tags = serializers.ListField(
-        child=serializers.CharField(), write_only=True, required=False
+        child=serializers.CharField(max_length=30), write_only=True, required=False
     )
 
     class Meta:
@@ -87,8 +112,17 @@ class ForumPostSerializerBase(serializers.ModelSerializer):
             'id', 'author', 'title', 'content', 'post_images',
             'uploaded_image_ids', 'uploaded_tags', 'tags',
             'comment_count', 'vote_count', 'user_vote',
-            'upvotes', 'views', 'bounty', 'is_resolved', 'timeAgo',
+            'upvotes', 'views', 'bounty', 'is_resolved', 'is_deleted', 'timeAgo', 'updated_at'
         ]
+        read_only_fields = ['is_resolved', 'is_deleted', 'views', 'upvotes']
+
+    def validate_content(self, value):
+        return filter_profanity(value)
+
+    def validate_uploaded_tags(self, value):
+        if len(value) > 5:
+            raise ValidationError("Możesz dodać maksymalnie 5 tagów.")
+        return value
 
     def create(self, validated_data):
         image_ids = validated_data.pop('uploaded_image_ids', [])
@@ -98,36 +132,49 @@ class ForumPostSerializerBase(serializers.ModelSerializer):
 
         if image_ids:
             post.images.set(image_ids)
-
         if tags_data:
-            if hasattr(post.tags, 'add'):
-                post.tags.add(*tags_data)
-            else:
-                post.tags = tags_data
-                post.save()
+            post.tags = tags_data
+            post.save()
 
         return post
+
+    def update(self, instance, validated_data):
+        """ Pełna obsługa edycji wpisu z aktualizacją zdjęć i tagów """
+        image_ids = validated_data.pop('uploaded_image_ids', None)
+        tags_data = validated_data.pop('uploaded_tags', None)
+
+        instance.title = validated_data.get('title', instance.title)
+        instance.content = validated_data.get('content', instance.content)
+
+        if image_ids is not None:
+            instance.images.set(image_ids)
+        if tags_data is not None:
+            instance.tags = tags_data
+
+        instance.save()
+        return instance
 
     def get_timeAgo(self, obj):
         return obj.created_at.strftime("%d/%m/%Y, %H:%M")
 
     def get_tags(self, obj):
-        if hasattr(obj, 'tags') and hasattr(obj.tags, 'names'):
-            return list(obj.tags.names())
+        if isinstance(obj.tags, list):
+            return obj.tags
         return []
 
 
 class ForumPostListSerializer(ForumPostSerializerBase):
-    """Lekka odpowiedź dla feedu — bez pełnej listy komentarzy."""
-
     class Meta(ForumPostSerializerBase.Meta):
         pass
 
 
 class ForumPostSerializer(ForumPostSerializerBase):
-    """Pełna odpowiedź dla pojedynczego posta — z zagnieżdżonymi komentarzami."""
-
-    comments = CommentSerializer(many=True, read_only=True)
+    comments = serializers.SerializerMethodField()
 
     class Meta(ForumPostSerializerBase.Meta):
         fields = ForumPostSerializerBase.Meta.fields + ['comments']
+
+    def get_comments(self, obj):
+        # Pobieramy tylko nieusunięte komentarze najwyższego poziomu (resztę może doczytywać apka)
+        comments = obj.comments.filter(is_deleted=False).order_by('created_at')
+        return CommentSerializer(comments, many=True, context=self.context).data
